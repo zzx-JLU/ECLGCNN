@@ -8,8 +8,8 @@ import math
 from torch_geometric.data import Data
 from torch_geometric.data import Dataset
 from torch_geometric.data import Batch
+from torch_geometric.loader import DataLoader
 import torch.nn.functional as F
-from scipy.signal import stft
 
 
 fs = 128  # 采样频率
@@ -79,77 +79,12 @@ def bandpass_filter(data):
     return results
 
 
-def compute_DE(data):
-    """
-    计算微分熵
-    :param data: 待计算的信号
-    :return: 微分熵
-    """
-    variance = np.var(data, ddof=1)  # 计算方差
-    return math.log(2 * math.pi * math.e * variance, 2) / 2  # 微分熵求取公式
-
-
-# def DE(data, stft_para):
-#     """
-#     compute DE and PSD
-#     --------
-#     input:  data [n*m]          n electrodes, m time points
-#             stft_para.stftn     frequency domain sampling rate
-#             stft_para.fStart    start frequency of each frequency band
-#             stft_para.fEnd      end frequency of each frequency band
-#             stft_para.window    window length of each sample point(seconds)
-#             stft_para.fs        original frequency
-#     output: DE [n*l*k]        n electrodes, l windows, k frequency bands
-#     """
-#     # initialize the parameters
-#     STFTN = stft_para['stftn']
-#     fStart = stft_para['fStart']
-#     fEnd = stft_para['fEnd']
-#     fs = stft_para['fs']
-#     window = stft_para['window']
-#
-#     fStartNum = np.zeros([len(fStart)], dtype=int)
-#     fEndNum = np.zeros([len(fEnd)], dtype=int)
-#     for i in range(0, len(fStart)):
-#         fStartNum[i] = int(fStart[i] / fs * STFTN)
-#         fEndNum[i] = int(fEnd[i] / fs * STFTN)
-#
-#     n = data.shape[0]
-#     de = np.zeros([n, len(fStart)])
-#     # Hanning window
-#     Hlength = window * fs
-#     # Hwindow = hanning(Hlength)
-#     Hwindow = np.array([0.5 - 0.5 * np.cos(2 * np.pi * n / (Hlength + 1)) for n in range(1, Hlength + 1)])
-#
-#     dataNow = data[0:n]
-#     for j in range(0, n):
-#         temp = dataNow[j]
-#         Hdata = temp * Hwindow
-#         FFTdata = fft(Hdata, STFTN)
-#         magFFTdata = abs(FFTdata[0:int(STFTN / 2)])
-#         for p in range(0, len(fStart)):
-#             E = 0
-#             for p0 in range(fStartNum[p] - 1, fEndNum[p]):
-#                 E = E + magFFTdata[p0] * magFFTdata[p0]
-#             E = E / (fEndNum[p] - fStartNum[p] + 1)
-#             de[j][p] = math.log(100 * E, 2)
-#
-#     return de
-
-
 def feature_extract(data_array):
     """
     提取特征
     :param data_array: 标定、分割过后的数据，每位受试者有 760 条数据
     :return: 特征立方体
     """
-    # stft_para = {
-    #     'stftn': fs,
-    #     'fStart': [1, 4, 8, 14, 31],
-    #     'fEnd': [3, 7, 13, 30, 50],
-    #     'window': 1,
-    #     'fs': fs
-    # }
     data_X = []
     for data in data_array:
         # 对每个通道提取 5 种频带
@@ -164,7 +99,6 @@ def feature_extract(data_array):
             for channel in channels:
                 band_data = []
                 for band in channel:
-                    # de = compute_DE(band[index: index + fs])  # 计算微分熵
                     de = scipy.stats.differential_entropy(band[index: index + fs])
                     band_data.append(de)
                 channel_data.append(band_data)
@@ -219,10 +153,11 @@ def get_edge(x, k=5, theta=1, tao=5):
     return edge_index, weights
 
 
-def to_graph(data):
+def to_graph(data, labels):
     """
     将数据转化为图结构
     :param data: 数据
+    :param labels: 标签
     :return: Data 类型的图数据
     """
     graph_list = []
@@ -235,29 +170,30 @@ def to_graph(data):
                          edge_attr=torch.tensor(edge_attr, dtype=torch.float32))
             video_graph.append(graph)
         batch = Batch.from_data_list(video_graph)
+        batch.y = labels[i]
         graph_list.append(batch)
     return graph_list
 
 
-def data_processing(data, label):
+def data_processing(data, labels):
     """
     数据处理
     :param data: 数据
-    :param label: 标签
+    :param labels: 标签
     :return: 处理后的数据和标签
     """
     # 数据标定
     data = data_calibrate(data[:, :32])
     # 数据分割
-    data, label = data_divide(data, label)
+    data, labels = data_divide(data, labels)
     # 打标签
-    label = set_label(label)
+    labels = set_label(labels)
     # 特征提取
     data = feature_extract(data)
     # 转换为图结构
-    graph = to_graph(data)
+    graph_list = to_graph(data, labels)
 
-    return graph, label
+    return graph_list
 
 
 class DeapDataset(Dataset):
@@ -283,8 +219,8 @@ class DeapDataset(Dataset):
         for i in range(len(self.raw_paths)):
             with open(self.raw_paths[i], 'rb') as f:
                 x = cPickle.load(f, encoding='iso-8859-1')
-            data, label = data_processing(x['data'], x['labels'])
-            torch.save([data, label], self.processed_paths[i])
+            data = data_processing(x['data'], x['labels'])
+            torch.save(data, self.processed_paths[i])
 
     def get(self, index):
         data = torch.load(self.processed_paths[index])
@@ -297,10 +233,17 @@ class DeapDataset(Dataset):
 if __name__ == '__main__':
     DEAPData = DeapDataset('./data')
 
-    subject_data, label = DEAPData[0]
-    print(len(subject_data))
-    print(len(label))
+    # batch = Batch.from_data_list([DEAPData[0][0][0], DEAPData[0][0][1], DEAPData[0][0][2], DEAPData[0][0][3]])
+    # print(batch)
+    # print(batch.num_graphs)
 
-    for data, label in DEAPData:
-        print(len(data))
-        print(len(label))
+    subject_data = DEAPData[0]
+    print(len(subject_data))
+
+    loader = DataLoader(DEAPData[0], batch_size=1)
+    for batch in loader:
+        print(batch)
+
+    # for data, label in DEAPData:
+    #     print(len(data))
+    #     print(len(label))
