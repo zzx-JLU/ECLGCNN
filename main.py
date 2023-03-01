@@ -12,32 +12,27 @@ if __name__ == '__main__':
     data = data_calibrate(data[:, :32])
     # 数据分割
     data, label = data_divide(data, label)
-    print(data.shape)
+    print(f'data.shape: {data.shape}')
 
-    f, t, zxx = stft(data, fs=128, window='hann', nperseg=128, noverlap=0, nfft=256)
-    print(zxx.shape)
+    f, t, zxx = stft(data, fs=128, window='hann', nperseg=128, noverlap=0, nfft=256, scaling='psd')
+    print(f'zxx.shape: {zxx.shape}')
 
-    # index1 = np.where(f == 1)[0][0]
-    # index2 = np.where(f == 3)[0][0]
-    # DELTA = np.sum(zxx[:, :, index1:index2], axis=2)
-    # print(DELTA.shape)
-    #
-    # variance1 = np.var(DELTA, axis=-1, ddof=1)
-    # print(variance1.shape)
-    #
-    # de1 = np.log2(2 * math.pi * math.e * variance1) / 2
-    # print(de1.shape)
-    #
-    # index1 = np.where(f == 4)[0][0]
-    # index2 = np.where(f == 7)[0][0]
-    # theta = np.sum(zxx[:, :, index1:index2], axis=2)
-    # print(theta.shape)
-    #
-    # variance2 = np.var(theta, axis=-1, ddof=1)
-    # print(variance2.shape)
-    #
-    # de2 = np.log2(2 * math.pi * math.e * variance2) / 2
-    # print(de2.shape)
-    #
-    # de_data = np.stack([de1, de2], axis=-1)
-    # print(de_data.shape)
+    power = np.power(np.abs(zxx), 2)
+
+    fStart = [1, 4, 8, 14, 31]  # 起始频率
+    fEnd = [3, 7, 13, 30, 50]  # 终止频率
+
+    de_time = []
+    for i in range(1, 7):
+        bands = []
+        for j in range(len(fStart)):
+            index1 = np.where(f == fStart[j])[0][0]
+            index2 = np.where(f == fEnd[j])[0][0]
+            psd = np.sum(power[:, :, index1:index2, i], axis=2) / (fEnd[j] - fStart[j] + 1)
+            de = np.log2(psd)
+            bands.append(de)
+        de_bands = np.stack(bands, axis=-1)
+        de_time.append(de_bands)
+
+    de_features = np.stack(de_time, axis=1)
+    print(f'de_features.shape: {de_features.shape}')

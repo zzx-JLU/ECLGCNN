@@ -6,7 +6,6 @@ from model import *
 
 def subject_dependent_train():
     dataset = DeapDataset('./data')
-    model = ECLGCNN(K=2, T=6, num_cells=30)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     save_dir = './model/'
 
@@ -22,6 +21,7 @@ def subject_dependent_train():
             trained_model = torch.load(save_path)
             print('model loaded.')
         else:
+            model = ECLGCNN(K=2, T=6, num_cells=30)
             trained_model = train(model, device, data, batch_size=40, max_step=100000,
                                   e=0.1, lr=0.003, alpha=0.0008)
             torch.save(trained_model, save_path)

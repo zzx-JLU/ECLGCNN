@@ -4,11 +4,9 @@ import scipy.stats
 import torch
 import os
 from scipy import signal
-import math
 from torch_geometric.data import Data
 from torch_geometric.data import Dataset
 from torch_geometric.data import Batch
-from torch_geometric.loader import DataLoader
 import torch.nn.functional as F
 
 
@@ -233,17 +231,10 @@ class DeapDataset(Dataset):
 if __name__ == '__main__':
     DEAPData = DeapDataset('./data')
 
-    # batch = Batch.from_data_list([DEAPData[0][0][0], DEAPData[0][0][1], DEAPData[0][0][2], DEAPData[0][0][3]])
-    # print(batch)
-    # print(batch.num_graphs)
-
     subject_data = DEAPData[0]
     print(len(subject_data))
 
-    loader = DataLoader(DEAPData[0], batch_size=1)
-    for batch in loader:
-        print(batch)
-
-    # for data, label in DEAPData:
-    #     print(len(data))
-    #     print(len(label))
+    for graph in subject_data:
+        print(graph)
+        print(graph.num_graphs)
+        print(graph.to_data_list())

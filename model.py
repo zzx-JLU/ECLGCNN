@@ -5,7 +5,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torch_geometric.nn import ChebConv
 from torch_geometric.nn.norm import BatchNorm
 from deap import DeapDataset
-from torch_geometric.loader import DataLoader
 
 
 class ECLGCNN(nn.Module):
@@ -19,7 +18,14 @@ class ECLGCNN(nn.Module):
         self.K = K
         self.T = T
 
-        self.conv = ChebConv(5, 5, self.K, normalization='sym', bias=False)
+        # self.convs = nn.ModuleList()
+        # self.batch_norms = nn.ModuleList()
+        #
+        # for i in range(T):
+        #     self.convs.append(ChebConv(5, 5, self.K, normalization='sym'))
+        #     self.batch_norms.append(BatchNorm(5))
+
+        self.conv = ChebConv(5, 5, self.K, normalization='sym')
         self.batch_norm = BatchNorm(5)
         self.sigmoid1 = nn.Sigmoid()
         self.lstm = nn.LSTM(32 * 5, num_cells, batch_first=True)
@@ -27,15 +33,21 @@ class ECLGCNN(nn.Module):
         self.linear = nn.Linear(num_cells * self.T, 4)
         self.sigmoid3 = nn.Sigmoid()
 
-    def forward(self, x, batch_size):
+    def forward(self, x):
         """
         前向传播
-        :param x: Batch object that contains 6 graphs
-        :param batch_size: size of each batch
+        :param x: list of Batch objects
         """
+        batch_size = len(x)
+
         # GCNN layer
-        y = self.conv(x.x, x.edge_index, x.edge_attr, x.batch)
-        y = self.batch_norm(y)
+        y_list = []
+        for data in x:
+            yi = self.conv(data.x, data.edge_index, data.edge_attr, data.batch)
+            yi = self.batch_norm(yi)
+            y_list.append(yi)
+
+        y = torch.vstack(y_list)
         y = self.sigmoid1(y)
 
         # LSTM layer
@@ -58,11 +70,11 @@ def train(model, device, train_data, batch_size, max_step, e, lr, alpha):
     :param device: 设备
     :param train_data: 训练数据
     :param batch_size: 批次大小
-    :param max_step: 最大循环次数
-    :param e: 误差阈值
-    :param lr: 学习率
-    :param alpha: 正则化参数
-    :return:
+    :param max_step: maximum number of iterations
+    :param e: stop iteration threshold
+    :param lr: learning rate
+    :param alpha: regularization coefficient
+    :return: trained model
     """
     print('training...')
     writer = SummaryWriter('../logs')
@@ -70,16 +82,23 @@ def train(model, device, train_data, batch_size, max_step, e, lr, alpha):
     model.to(device)
     loss_func = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=alpha)
-    loader = DataLoader(train_data, batch_size=batch_size)
+
+    for data in train_data:
+        data.to(device)
 
     model.train()
     step = 0
     flag = True
     while flag:
-        for batch in loader:
-            output = model(batch.to(device), batch_size)
-            label = torch.reshape(batch.y, (batch_size, 2))
-            loss = loss_func(output, label)
+        for i in range(0, len(train_data), batch_size):
+            batch = train_data[i: i+batch_size]
+            label = []
+            for data in batch:
+                label.append(data.y)
+            label = torch.vstack(label)
+
+            output = model(batch)
+            loss = loss_func(output, label.to(device))
 
             writer.add_scalar('train_loss', loss.item(), step)
             if step % 100 == 0:
@@ -107,7 +126,6 @@ def validate(model, device, val_data):
     print('validating...')
     model.to(device)
     model.eval()
-    loader = DataLoader(val_data, batch_size=1)
 
     TP = np.array([0, 0])
     TN = np.array([0, 0])
@@ -115,10 +133,10 @@ def validate(model, device, val_data):
     FN = np.array([0, 0])
 
     with torch.no_grad():
-        for batch in loader:
-            output = model(batch.to(device), 1)
+        for data in val_data:
+            output = model([data.to(device)])
             result = torch.argmax(output, dim=-1).flatten()
-            label = batch.y
+            label = data.y
 
             for j in range(2):
                 if result[j] == 0 and result[j] == label[j]:
@@ -132,8 +150,15 @@ def validate(model, device, val_data):
 
     acc = (TP + TN) / (TP + TN + FP + FN)
     precision = TP / (TP + FP)
+    precision = np.where(np.isnan(precision), 0, precision)
     recall = TP / (TP + FN)
     f_score = 2 * precision * recall / (precision + recall)
+
+    print(f'acc: {acc}')
+    print(f'precision: {precision}')
+    print(f'recall: {recall}')
+    print(f'F_score: {f_score}')
+
     return acc, f_score
 
 
@@ -155,7 +180,7 @@ if __name__ == '__main__':
     loss_func = nn.CrossEntropyLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.1, weight_decay=0.1)
 
-    output = model(batch, 1)
+    output = model([batch], 1, device)
     print(output)
     print(output.shape)
 
