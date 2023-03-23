@@ -4,6 +4,7 @@ import scipy.stats
 import torch
 import os
 from scipy import signal
+from scipy.signal import stft
 from torch_geometric.data import Data
 from torch_geometric.data import Dataset
 from torch_geometric.data import Batch
@@ -83,27 +84,48 @@ def feature_extract(data_array):
     :param data_array: 标定、分割过后的数据，每位受试者有 760 条数据
     :return: 特征立方体
     """
-    data_X = []
-    for data in data_array:
-        # 对每个通道提取 5 种频带
-        channels = []
-        for channel in data:
-            bands = bandpass_filter(channel)
-            channels.append(bands)
+    # data_X = []
+    # for data in data_array:
+    #     # 对每个通道提取 5 种频带
+    #     channels = []
+    #     for channel in data:
+    #         bands = bandpass_filter(channel)
+    #         channels.append(bands)
+    #
+    #     item_data = []
+    #     for index in range(0, data.shape[-1], fs):
+    #         channel_data = []
+    #         for channel in channels:
+    #             band_data = []
+    #             for band in channel:
+    #                 de = scipy.stats.differential_entropy(band[index: index + fs])
+    #                 band_data.append(de)
+    #             channel_data.append(band_data)
+    #         item_data.append(channel_data)
+    #     data_X.append(item_data)
+    #
+    # return np.array(data_X)
+    f, t, zxx = stft(data_array, fs=128, window='hann', nperseg=128, noverlap=0, nfft=256, scaling='psd')
 
-        item_data = []
-        for index in range(0, data.shape[-1], fs):
-            channel_data = []
-            for channel in channels:
-                band_data = []
-                for band in channel:
-                    de = scipy.stats.differential_entropy(band[index: index + fs])
-                    band_data.append(de)
-                channel_data.append(band_data)
-            item_data.append(channel_data)
-        data_X.append(item_data)
+    power = np.power(np.abs(zxx), 2)
 
-    return np.array(data_X)
+    fStart = [1, 4, 8, 14, 31]  # 起始频率
+    fEnd = [3, 7, 13, 30, 50]  # 终止频率
+
+    de_time = []
+    for i in range(1, 7):
+        bands = []
+        for j in range(len(fStart)):
+            index1 = np.where(f == fStart[j])[0][0]
+            index2 = np.where(f == fEnd[j])[0][0]
+            psd = np.sum(power[:, :, index1:index2, i], axis=2) / (fEnd[j] - fStart[j] + 1)
+            de = np.log2(psd)
+            bands.append(de)
+        de_bands = np.stack(bands, axis=-1)
+        de_time.append(de_bands)
+
+    de_features = np.stack(de_time, axis=1)
+    return de_features
 
 
 def gaussian(dist, theta):
@@ -168,7 +190,7 @@ def to_graph(data, labels):
                          edge_attr=torch.tensor(edge_attr, dtype=torch.float32))
             video_graph.append(graph)
         batch = Batch.from_data_list(video_graph)
-        batch.y = labels[i]
+        # batch.y = labels[i]
         graph_list.append(batch)
     return graph_list
 
@@ -191,7 +213,7 @@ def data_processing(data, labels):
     # 转换为图结构
     graph_list = to_graph(data, labels)
 
-    return graph_list
+    return graph_list, labels
 
 
 class DeapDataset(Dataset):
@@ -217,8 +239,8 @@ class DeapDataset(Dataset):
         for i in range(len(self.raw_paths)):
             with open(self.raw_paths[i], 'rb') as f:
                 x = cPickle.load(f, encoding='iso-8859-1')
-            data = data_processing(x['data'], x['labels'])
-            torch.save(data, self.processed_paths[i])
+            processed_data = data_processing(x['data'], x['labels'])
+            torch.save(processed_data, self.processed_paths[i])
 
     def get(self, index):
         data = torch.load(self.processed_paths[index])
@@ -231,10 +253,17 @@ class DeapDataset(Dataset):
 if __name__ == '__main__':
     DEAPData = DeapDataset('./data')
 
-    subject_data = DEAPData[0]
+    subject_data, labels = DEAPData[0]
     print(len(subject_data))
 
     for graph in subject_data:
         print(graph)
-        print(graph.num_graphs)
-        print(graph.to_data_list())
+        print(graph.edge_index)
+        for data in graph.to_data_list():
+            print(data.edge_index)
+        break
+
+    batch = Batch.from_data_list(subject_data[0:20])
+    print(batch)
+    print(batch.edge_index)
+    print(batch.num_graphs)
