@@ -17,20 +17,18 @@ class ECLGCNN(nn.Module):
         self.K = K
         self.T = T
 
-        # self.convs = nn.ModuleList()
-        # self.batch_norms = nn.ModuleList()
-        #
-        # for i in range(T):
-        #     self.convs.append(ChebConv(5, 5, self.K, normalization='sym'))
-        #     self.batch_norms.append(BatchNorm(5))
+        self.convs = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+
+        for i in range(T):
+            self.convs.append(ChebConv(5, 5, self.K, normalization='sym'))
+            self.batch_norms.append(BatchNorm(5))
 
         self.conv = ChebConv(5, 5, self.K, normalization='sym')
         self.batch_norm = BatchNorm(5)
         self.sigmoid1 = nn.Sigmoid()
-        self.dropout1 = nn.Dropout(0.2)
         self.lstm = nn.LSTM(32 * 5, num_cells, batch_first=True)
         self.sigmoid2 = nn.Sigmoid()
-        self.dropout2 = nn.Dropout(0.2)
         self.linear = nn.Linear(num_cells * self.T, 2)
         self.sigmoid3 = nn.Sigmoid()
 
@@ -43,26 +41,29 @@ class ECLGCNN(nn.Module):
     def forward(self, x):
         """
         前向传播
-        :param x: Batch object
+        :param x: list of Batch objects
         """
-        batch_size = x.num_graphs
+        batch_size = len(x)
 
         # GCNN layer
-        # y_list = []
-        # for data in x:
-        #     yi = self.conv(data.x, data.edge_index, data.edge_attr, data.batch)
-        #     yi = self.batch_norm(yi)
-        #     y_list.append(yi)
-        y = self.conv(x.x, x.edge_index, x.edge_attr, x.batch)
-        y = self.batch_norm(y)
+        y_list = []
+        for i in range(self.T):
+            xi = []
+            for data in x:
+                xi.append(data.get_example(i))
+            batch_i = Batch.from_data_list(xi)
+            yi = self.convs[i](batch_i.x, batch_i.edge_index, batch_i.edge_attr, batch_i.batch)
+            yi = self.batch_norms[i](yi)
+            y_list.append(yi)
+
+        y = torch.stack(y_list)
         y = self.sigmoid1(y)
-        # y = self.dropout1(y)
 
         # LSTM layer
+        y = y.transpose(0, 1)
         y = torch.reshape(y, (batch_size, self.T, -1))
         y, (h, c) = self.lstm(y)
         y = self.sigmoid2(y)
-        # y = self.dropout2(y)
 
         # Dense layer
         y = torch.reshape(y, (batch_size, -1))
@@ -77,7 +78,9 @@ if __name__ == '__main__':
     dataset = DeapDataset('./data')
     subject_data, labels = dataset[0]
 
-    batch = Batch.from_data_list(subject_data[0:20]).to(device)
+    batch = subject_data[0:20]
+    for data in batch:
+        data.to(device)
     label = labels[0:20].to(device)
 
     model = ECLGCNN(K=2, T=6, num_cells=30)

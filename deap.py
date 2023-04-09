@@ -1,9 +1,7 @@
 import _pickle as cPickle
 import numpy as np
-import scipy.stats
 import torch
 import os
-from scipy import signal
 from scipy.signal import stft
 from torch_geometric.data import Data
 from torch_geometric.data import Dataset
@@ -61,50 +59,12 @@ def set_label(labels):
     return torch.tensor(np.where(label1 < 5, 0, 1), dtype=torch.long)  # 小于 5 的元素改为 0，大于等于 5 的改为 1
 
 
-def bandpass_filter(data):
-    """
-    带通滤波器，提取 5 种频带的信号
-    :param data: 要过滤的信号
-    :return: 5 种频带的信号
-    """
-    fStart = [1, 4, 8, 14, 31]  # 起始频率
-    fEnd = [3, 7, 13, 30, 50]  # 终止频率
-    results = []
-    for band_index, band in enumerate(fStart):
-        b, a = signal.butter(4, [fStart[band_index] / fs, fEnd[band_index] / fs], 'bandpass', fs=fs)  # 配置滤波器，4 表示滤波器的阶数
-        result = signal.filtfilt(b, a, data)
-        results.append(result)
-
-    return results
-
-
 def feature_extract(data_array):
     """
     提取特征
     :param data_array: 标定、分割过后的数据，每位受试者有 760 条数据
     :return: 特征立方体
     """
-    # data_X = []
-    # for data in data_array:
-    #     # 对每个通道提取 5 种频带
-    #     channels = []
-    #     for channel in data:
-    #         bands = bandpass_filter(channel)
-    #         channels.append(bands)
-    #
-    #     item_data = []
-    #     for index in range(0, data.shape[-1], fs):
-    #         channel_data = []
-    #         for channel in channels:
-    #             band_data = []
-    #             for band in channel:
-    #                 de = scipy.stats.differential_entropy(band[index: index + fs])
-    #                 band_data.append(de)
-    #             channel_data.append(band_data)
-    #         item_data.append(channel_data)
-    #     data_X.append(item_data)
-    #
-    # return np.array(data_X)
     f, t, zxx = stft(data_array, fs=128, window='hann', nperseg=128, noverlap=0, nfft=256, scaling='psd')
 
     power = np.power(np.abs(zxx), 2)
@@ -173,11 +133,10 @@ def get_edge(x, k=5, theta=1, tao=5):
     return edge_index, weights
 
 
-def to_graph(data, labels):
+def to_graph(data):
     """
     将数据转化为图结构
     :param data: 数据
-    :param labels: 标签
     :return: Data 类型的图数据
     """
     graph_list = []
@@ -190,7 +149,6 @@ def to_graph(data, labels):
                          edge_attr=torch.tensor(edge_attr, dtype=torch.float32))
             video_graph.append(graph)
         batch = Batch.from_data_list(video_graph)
-        # batch.y = labels[i]
         graph_list.append(batch)
     return graph_list
 
@@ -211,7 +169,7 @@ def data_processing(data, labels):
     # 特征提取
     data = feature_extract(data)
     # 转换为图结构
-    graph_list = to_graph(data, labels)
+    graph_list = to_graph(data)
 
     return graph_list, labels
 
