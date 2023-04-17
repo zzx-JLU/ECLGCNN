@@ -99,7 +99,10 @@ def validate(model, device, val_data, val_labels):
     else:
         precision = TP / (TP + FP)
 
-    recall = TP / (TP + FN)
+    if TP + FN == 0:
+        recall = 0
+    else:
+        recall = TP / (TP + FN)
 
     if precision + recall == 0:
         f_score = 0
@@ -128,6 +131,8 @@ def binary_sampling(data, label):
     print([num_0, num_1])
 
     if abs(num_0 - num_1) < num * 0.25:
+        return data, label
+    elif num_0 == 0 or num_1 == 0:
         return data, label
     else:
         selected_index = []
@@ -181,6 +186,56 @@ def subject_cross_validation(data, labels, seed):
     return fold_models, avg_acc, avg_f_score
 
 
+def subject_train(label_type):
+    assert label_type == 'valence' or label_type == 'arousal' or label_type == 'dominance', 'invalid label type'
+
+    dataset = DeapDataset('./data')
+    acc_arrays = []
+    f_score_arrays = []
+
+    print(f'=============={label_type}==============')
+    for seed in range(0, 3):
+        acc_list = []
+        f_score_list = []
+
+        step = 1
+        for data, label in dataset:
+            print(f'-------seed {seed}, subject {step}-------')
+
+            if label_type == 'valence':
+                used_label = label[:, 0]
+            elif label_type == 'arousal':
+                used_label = label[:, 1]
+            else:
+                used_label = label[:, 2]
+
+            model_path = model_dir + f'seed{seed}/model_{step}_{label_type}.pt'
+            if os.path.exists(model_path):
+                print('model already exists, loading...')
+                trained_models, acc, f_score = torch.load(model_path)
+                print('model loaded.')
+            else:
+                trained_models, acc, f_score = subject_cross_validation(data, used_label, seed)
+                torch.save([trained_models, acc, f_score], model_path)
+                print('model saved.')
+
+            acc_list.append(acc)
+            f_score_list.append(f_score)
+            print(f'avg_acc: {acc}, avg_f_score: {f_score}')
+
+            step += 1
+
+        acc_array = np.array(acc_list)
+        f_score_array = np.array(f_score_list)
+        img_path = img_dir + f'seed{seed}/dependent_{label_type}.png'
+        output_figure(img_path, acc_array, f_score_array, f'{label_type}')
+
+        acc_arrays.append(acc_array)
+        f_score_arrays.append(f_score_array)
+
+    return acc_arrays, f_score_arrays
+
+
 def output_figure(path, acc, f_score, title):
     fig = plt.figure(figsize=(10, 5))
     axes = fig.add_axes([0.1, 0.1, 0.8, 0.8])
@@ -205,90 +260,25 @@ def output_figure(path, acc, f_score, title):
 
 
 def subject_dependent_exp():
-    dataset = DeapDataset('./data')
-
-    valence_acc_arrays = []
-    valence_f_score_arrays = []
-    arousal_acc_arrays = []
-    arousal_f_score_arrays = []
-
-    for seed in range(0, 3):
-        valence_acc = []
-        valence_f_score = []
-        arousal_acc = []
-        arousal_f_score = []
-
-        step = 1
-        for data, label in dataset:
-            print(f'-------------subject: {step}-------------')
-            print('==========valence==========')
-            valence_label = label[:, 0]
-            model_path = model_dir + f'seed{seed}/model_{step}_valence.pt'
-            if os.path.exists(model_path):
-                print('model already exists, loading...')
-                trained_models, acc, f_score = torch.load(model_path)
-                print('model loaded.')
-            else:
-                trained_models, acc, f_score = subject_cross_validation(data, valence_label, seed)
-                torch.save([trained_models, acc, f_score], model_path)
-                print('model saved.')
-
-            valence_acc.append(acc)
-            valence_f_score.append(f_score)
-            print(f'avg_acc: {acc}, avg_f_score: {f_score}')
-
-            print('==========arousal==========')
-            arousal_label = label[:, 1]
-            model_path = model_dir + f'seed{seed}/model_{step}_arousal.pt'
-            if os.path.exists(model_path):
-                print('model already exists, loading...')
-                trained_models, acc, f_score = torch.load(model_path)
-                print('model loaded.')
-            else:
-                trained_models, acc, f_score = subject_cross_validation(data, arousal_label, seed)
-                torch.save([trained_models, acc, f_score], model_path)
-                print('model saved.')
-
-            arousal_acc.append(acc)
-            arousal_f_score.append(f_score)
-            print(f'avg_acc: {acc}, avg_f_score: {f_score}')
-
-            step += 1
-
-        valence_acc_array = np.array(valence_acc)
-        valence_f_score_array = np.array(valence_f_score)
-        valence_path = f'./imgs/seed{seed}/dependent_valence.png'
-        output_figure(valence_path, valence_acc_array, valence_f_score_array, 'valence')
-
-        arousal_acc_array = np.array(arousal_acc)
-        arousal_f_score_array = np.array(arousal_f_score)
-        arousal_path = f'./imgs/seed{seed}/dependent_arousal.png'
-        output_figure(arousal_path, arousal_acc_array, arousal_f_score_array, 'arousal')
-
-        valence_acc_arrays.append(valence_acc_array)
-        valence_f_score_arrays.append(valence_f_score_array)
-        arousal_acc_arrays.append(arousal_acc_array)
-        arousal_f_score_arrays.append(arousal_f_score_array)
-
-        print('---------RESULT---------')
-        print('valence')
-        print(f'  acc: {valence_acc_array}')
-        print(f'  average acc: {valence_acc_array.mean()}')
-        print(f'  f-score: {valence_f_score_array}')
-        print(f'  average f-score: {valence_f_score_array.mean()}')
-        print('arousal')
-        print(f'  acc: {arousal_acc_array}')
-        print(f'  average acc: {arousal_acc_array.mean()}')
-        print(f'  f-score: {arousal_f_score_array}')
-        print(f'  average f-score: {arousal_f_score_array.mean()}')
-
-    avg_valence_acc = sum(valence_acc_arrays) / len(valence_acc_arrays)
-    avg_valence_f_score = sum(valence_f_score_arrays) / len(valence_f_score_arrays)
-    avg_arousal_acc = sum(arousal_acc_arrays) / len(arousal_acc_arrays)
-    avg_arousal_f_score = sum(arousal_f_score_arrays) / len(arousal_f_score_arrays)
-
+    valence_acc, valence_f_score = subject_train('valence')
+    avg_valence_acc = sum(valence_acc) / len(valence_acc)
+    avg_valence_f_score = sum(valence_f_score) / len(valence_f_score)
     output_figure('./imgs/dependent_valence_avg.png', avg_valence_acc, avg_valence_f_score, 'valence_avg')
+
+    arousal_acc, arousal_f_score = subject_train('arousal')
+    avg_arousal_acc = sum(arousal_acc) / len(arousal_acc)
+    avg_arousal_f_score = sum(arousal_f_score) / len(arousal_f_score)
     output_figure('./imgs/dependent_arousal_avg.png', avg_arousal_acc, avg_arousal_f_score, 'arousal_avg')
+
+    dominance_acc, dominance_f_score = subject_train('dominance')
+    avg_dominance_acc = sum(dominance_acc) / len(dominance_acc)
+    avg_dominance_f_score = sum(dominance_f_score) / len(dominance_f_score)
+    output_figure('./imgs/dependent_dominance_avg.png', avg_dominance_acc, avg_dominance_f_score, 'dominance_avg')
+
+    print('-------------------RESULT-------------------')
+    print(f'[valence]: avg_acc = {np.mean(avg_valence_acc)}, avg_f_score = {np.mean(avg_valence_f_score)}')
+    print(f'[arousal]: avg_acc = {np.mean(avg_arousal_acc)}, avg_f_score = {np.mean(avg_arousal_f_score)}')
+    print(f'[dominance]: avg_acc = {np.mean(avg_dominance_acc)}, avg_f_score = {np.mean(avg_dominance_f_score)}')
 
 
 if __name__ == '__main__':

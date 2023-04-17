@@ -55,8 +55,7 @@ def set_label(labels):
     :param labels: 标签
     :return: 处理后的标签
     """
-    label1, label2 = np.split(labels, [2], axis=1)
-    return torch.tensor(np.where(label1 < 5, 0, 1), dtype=torch.long)  # 小于 5 的元素改为 0，大于等于 5 的改为 1
+    return torch.tensor(np.where(labels < 5, 0, 1), dtype=torch.long)  # 小于 5 的元素改为 0，大于等于 5 的改为 1
 
 
 def feature_extract(data_array):

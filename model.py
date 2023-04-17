@@ -24,8 +24,6 @@ class ECLGCNN(nn.Module):
             self.convs.append(ChebConv(5, 5, self.K, normalization='sym'))
             self.batch_norms.append(BatchNorm(5))
 
-        self.conv = ChebConv(5, 5, self.K, normalization='sym')
-        self.batch_norm = BatchNorm(5)
         self.sigmoid1 = nn.Sigmoid()
         self.lstm = nn.LSTM(32 * 5, num_cells, batch_first=True)
         self.sigmoid2 = nn.Sigmoid()
