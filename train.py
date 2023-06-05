@@ -10,22 +10,34 @@ from deap import DeapDataset
 from model import ECLGCNN
 
 
-# parameters for training
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 loss_fn = nn.CrossEntropyLoss().to(device)
-batch_size = 32
-max_iteration = 5000  # maximum number of iterations
-e = 0.1  # stop iteration threshold
-lr = 0.003  # learning rate
-alpha = 0.0008  # regularization coefficient
-k_fold = 5
-model_dir = './model/'
-img_dir = './imgs/'
 
-# parameters of model
-K = 2
-T = 6
-num_cells = 30
+model_dir = './model/'
+if not os.path.exists(model_dir):
+    os.mkdir(model_dir)
+
+img_dir = './imgs/'
+if not os.path.exists(img_dir):
+    os.mkdir(img_dir)
+
+seeds = range(0, 3)
+for seed in seeds:
+    model_seed_dir = model_dir + f'seed{seed}'
+    if not os.path.exists(model_seed_dir):
+        os.mkdir(model_seed_dir)
+
+    img_seed_dir = img_dir + f'seed{seed}'
+    if not os.path.exists(img_seed_dir):
+        os.mkdir(img_seed_dir)
+
+label_types = ['valence', 'arousal', 'dominance']
+params = {
+    'T': 6,
+    'batch_size': 32,
+    'max_iteration': 5000,  # maximum number of iterations
+    'k_fold': 5,
+}
 
 
 def train(model, device, train_data, train_labels, loss_fn, optimizer):
@@ -36,6 +48,7 @@ def train(model, device, train_data, train_labels, loss_fn, optimizer):
 
     model.to(device)
     model.train()
+    batch_size = params['batch_size']
 
     step = 0
     flag = True
@@ -48,9 +61,9 @@ def train(model, device, train_data, train_labels, loss_fn, optimizer):
             loss = loss_fn(output, label)
 
             if step % 100 == 0:
-                print(f'setp: {step}, Loss: {loss.item()}')
+                print(f'step: {step}, Loss: {loss.item()}')
 
-            if loss < e:
+            if loss < params['e']:
                 flag = False
                 break
 
@@ -59,7 +72,7 @@ def train(model, device, train_data, train_labels, loss_fn, optimizer):
             optimizer.step()
 
             step += 1
-            if step >= max_iteration:
+            if step >= params['max_iteration']:
                 flag = False
                 break
 
@@ -149,8 +162,32 @@ def binary_sampling(data, label):
         return selected_data, selected_label
 
 
-def subject_cross_validation(data, labels, seed):
-    splits = KFold(n_splits=k_fold, shuffle=True, random_state=seed)
+def output_figure(path, acc, f_score, title):
+    fig = plt.figure(figsize=(10, 5))
+    axes = fig.add_axes([0.1, 0.1, 0.8, 0.8])
+    x = np.arange(1, 33, dtype=int)
+
+    axes.plot(x, acc, 'rs-')  # 红色，正方形点，实线
+    axes.plot(x, f_score, 'bo--')  # 蓝色，圆点，虚线
+    axes.legend(labels=('acc', 'F-score'), loc='lower right', fontsize=16)
+
+    axes.set_ylim(0, 1)
+    axes.set_yticks(np.arange(0, 1.1, 0.1))
+    axes.set_yticklabels([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1], fontsize=16)
+
+    axes.set_xticks(x)
+    axes.set_xticklabels(x, fontsize=12)
+    axes.set_xlabel('subject', fontsize=14)
+
+    axes.set_title(title, fontsize=18)
+    axes.grid(True)
+
+    fig.savefig(path)
+    fig.show()
+
+
+def cross_validation(data, labels, seed):
+    splits = KFold(n_splits=params['k_fold'], shuffle=True, random_state=seed)
 
     acc_list = []
     f_score_list = []
@@ -170,8 +207,8 @@ def subject_cross_validation(data, labels, seed):
 
         train_data, train_labels = binary_sampling(train_data, train_labels)
 
-        model = ECLGCNN(K=K, T=T, num_cells=num_cells)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=alpha)
+        model = ECLGCNN(K=params['K'], T=params['T'], num_cells=params['num_cells'])
+        optimizer = torch.optim.Adam(model.parameters(), lr=params['lr'], weight_decay=params['alpha'])
 
         trained_model = train(model, device, train_data, train_labels, loss_fn, optimizer)
         fold_models.append(trained_model)
@@ -186,99 +223,75 @@ def subject_cross_validation(data, labels, seed):
     return fold_models, avg_acc, avg_f_score
 
 
-def subject_train(label_type):
-    assert label_type == 'valence' or label_type == 'arousal' or label_type == 'dominance', 'invalid label type'
+def subject_dependent_exp():
+    print('------------------------------------------------')
+    print('|         subject dependent experiment         |')
+    print('------------------------------------------------')
+
+    params['K'] = 2
+    params['num_cells'] = 30
+    params['e'] = 0.1
+    params['lr'] = 0.003
+    params['alpha'] = 0.0008
 
     dataset = DeapDataset('./data')
-    acc_arrays = []
-    f_score_arrays = []
+    avg_acc_list = []
+    avg_f_score_list = []
 
-    print(f'=============={label_type}==============')
-    for seed in range(0, 3):
-        acc_list = []
-        f_score_list = []
+    for i in range(3):
+        print(f'=============={label_types[i]}==============')
 
-        step = 1
-        for data, label in dataset:
-            print(f'-------seed {seed}, subject {step}-------')
+        acc_arrays = []
+        f_score_arrays = []
 
-            if label_type == 'valence':
-                used_label = label[:, 0]
-            elif label_type == 'arousal':
-                used_label = label[:, 1]
-            else:
-                used_label = label[:, 2]
+        for seed in seeds:
+            acc_list = []
+            f_score_list = []
 
-            model_path = model_dir + f'seed{seed}/model_{step}_{label_type}.pt'
-            if os.path.exists(model_path):
-                print('model already exists, loading...')
-                trained_models, acc, f_score = torch.load(model_path)
-                print('model loaded.')
-            else:
-                trained_models, acc, f_score = subject_cross_validation(data, used_label, seed)
-                torch.save([trained_models, acc, f_score], model_path)
-                print('model saved.')
+            step = 1
+            for data, label in dataset:
+                print(f'-------seed {seed}, subject {step}-------')
+                used_label = label[:, i]
 
-            acc_list.append(acc)
-            f_score_list.append(f_score)
-            print(f'avg_acc: {acc}, avg_f_score: {f_score}')
+                model_path = model_dir + f'seed{seed}/model_{step}_{label_types[i]}.pt'
+                if os.path.exists(model_path):
+                    print('model already exists, loading...')
+                    trained_models, acc, f_score = torch.load(model_path)
+                    print('model loaded.')
+                else:
+                    trained_models, acc, f_score = cross_validation(data, used_label, seed)
+                    torch.save([trained_models, acc, f_score], model_path)
+                    print('model saved.')
 
-            step += 1
+                acc_list.append(acc)
+                f_score_list.append(f_score)
+                print(f'avg_acc: {acc}, avg_f_score: {f_score}')
 
-        acc_array = np.array(acc_list)
-        f_score_array = np.array(f_score_list)
-        img_path = img_dir + f'seed{seed}/dependent_{label_type}.png'
-        output_figure(img_path, acc_array, f_score_array, f'{label_type}')
+                step += 1
 
-        acc_arrays.append(acc_array)
-        f_score_arrays.append(f_score_array)
+            acc_array = np.array(acc_list)
+            f_score_array = np.array(f_score_list)
+            img_path = img_dir + f'seed{seed}/dependent_{label_types[i]}.png'
+            output_figure(img_path, acc_array, f_score_array, f'{label_types[i]}')
 
-    return acc_arrays, f_score_arrays
+            acc_arrays.append(acc_array)
+            f_score_arrays.append(f_score_array)
 
+        # calculate the average Acc and F-score of 3 seeds
+        avg_acc = sum(acc_arrays) / len(acc_arrays)
+        avg_acc_list.append(avg_acc)
 
-def output_figure(path, acc, f_score, title):
-    fig = plt.figure(figsize=(10, 5))
-    axes = fig.add_axes([0.1, 0.1, 0.8, 0.8])
-    x = np.arange(1, 33, dtype=int)
+        avg_f_score = sum(f_score_arrays) / len(f_score_arrays)
+        avg_f_score_list.append(avg_f_score)
 
-    axes.plot(x, acc, 'rs-')  # 红色，正方形点，实线
-    axes.plot(x, f_score, 'bo--')  # 蓝色，圆点，虚线
-    axes.legend(labels=('acc', 'F-score'), loc='lower right')
-
-    axes.set_ylim(0, 1)
-    axes.set_yticks(np.arange(0, 1.1, 0.1))
-    axes.set_yticklabels([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1])
-
-    axes.set_xticks(x)
-    axes.set_xticklabels(x)
-
-    axes.set_title(title)
-    axes.grid(True)
-
-    fig.savefig(path)
-    fig.show()
-
-
-def subject_dependent_exp():
-    valence_acc, valence_f_score = subject_train('valence')
-    avg_valence_acc = sum(valence_acc) / len(valence_acc)
-    avg_valence_f_score = sum(valence_f_score) / len(valence_f_score)
-    output_figure('./imgs/dependent_valence_avg.png', avg_valence_acc, avg_valence_f_score, 'valence_avg')
-
-    arousal_acc, arousal_f_score = subject_train('arousal')
-    avg_arousal_acc = sum(arousal_acc) / len(arousal_acc)
-    avg_arousal_f_score = sum(arousal_f_score) / len(arousal_f_score)
-    output_figure('./imgs/dependent_arousal_avg.png', avg_arousal_acc, avg_arousal_f_score, 'arousal_avg')
-
-    dominance_acc, dominance_f_score = subject_train('dominance')
-    avg_dominance_acc = sum(dominance_acc) / len(dominance_acc)
-    avg_dominance_f_score = sum(dominance_f_score) / len(dominance_f_score)
-    output_figure('./imgs/dependent_dominance_avg.png', avg_dominance_acc, avg_dominance_f_score, 'dominance_avg')
+        output_figure(f'./imgs/dependent_{label_types[i]}_avg.png', avg_acc, avg_f_score, f'{label_types[i]}_avg')
 
     print('-------------------RESULT-------------------')
-    print(f'[valence]: avg_acc = {np.mean(avg_valence_acc)}, avg_f_score = {np.mean(avg_valence_f_score)}')
-    print(f'[arousal]: avg_acc = {np.mean(avg_arousal_acc)}, avg_f_score = {np.mean(avg_arousal_f_score)}')
-    print(f'[dominance]: avg_acc = {np.mean(avg_dominance_acc)}, avg_f_score = {np.mean(avg_dominance_f_score)}')
+    for i in range(3):
+        print(f'{label_types[i]}')
+        print(f'    acc: {avg_acc_list[i]}')
+        print(f'    f-score: {avg_f_score_list[i]}')
+        print(f'    avg_acc = {np.mean(avg_acc_list[i])}, avg_f_score = {np.mean(avg_f_score_list[i])}')
 
 
 if __name__ == '__main__':

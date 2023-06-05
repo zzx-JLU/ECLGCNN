@@ -26,6 +26,7 @@ class ECLGCNN(nn.Module):
 
         self.sigmoid1 = nn.Sigmoid()
         self.lstm = nn.LSTM(32 * 5, num_cells, batch_first=True)
+        self.batch_norm1 = nn.BatchNorm1d(self.T)
         self.sigmoid2 = nn.Sigmoid()
         self.linear = nn.Linear(num_cells * self.T, 2)
         self.sigmoid3 = nn.Sigmoid()
@@ -61,6 +62,7 @@ class ECLGCNN(nn.Module):
         y = y.transpose(0, 1)
         y = torch.reshape(y, (batch_size, self.T, -1))
         y, (h, c) = self.lstm(y)
+        y = self.batch_norm1(y)
         y = self.sigmoid2(y)
 
         # Dense layer
